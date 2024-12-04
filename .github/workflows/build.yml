@@ -1,0 +1,132 @@
+name: Build and Publish
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'  # 当推送版本标签时触发
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        architecture: [x64, x86, arm]
+        include:
+          - os: ubuntu-latest
+            architecture: arm64
+            platform: linux
+          - os: windows-latest
+            architecture: arm64
+            platform: windows
+          - os: macos-latest
+            architecture: arm64
+            platform: macos
+          - os: ubuntu-latest
+            architecture: x64
+            platform: linux
+          - os: windows-latest
+            architecture: x64
+            platform: windows
+          - os: macos-latest
+            architecture: x64
+            platform: macos
+          - os: ubuntu-latest
+            architecture: x86
+            platform: linux
+          - os: windows-latest
+            architecture: x86
+            platform: windows
+          - os: ubuntu-latest
+            architecture: arm
+            platform: linux
+          - os: windows-latest
+            architecture: arm
+            platform: windows
+          - os: macos-latest
+            architecture: arm
+            platform: macos
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get version
+      id: version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        else
+          echo "version=$(date +'%Y.%m.%d')-dev" >> $GITHUB_OUTPUT
+        fi
+      shell: bash
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0'
+
+    - name: Cache NuGet packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+
+    - name: Install dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: |
+        dotnet publish -c Release -r ${{ matrix.os }}-${{ matrix.architecture }} \
+        --self-contained true \
+        -p:PublishSingleFile=true \
+        -p:PublishTrimmed=true \
+        -p:EnableCompressionInSingleFile=true \
+        -p:Version=${{ steps.version.outputs.version }}
+
+    - name: Prepare artifacts
+      shell: bash
+      run: |
+        cd ./bin/Release/net8.0/${{ matrix.os }}-${{ matrix.architecture }}/publish/
+        if [[ "${{ matrix.platform }}" == "windows" ]]; then
+          mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_Release.exe
+        else
+          mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_Release
+        fi
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}
+        path: ./bin/Release/net8.0/${{ matrix.os }}-${{ matrix.architecture }}/publish/MoyuLinuxdo_*
+        if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          */MoyuLinuxdo_*
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
