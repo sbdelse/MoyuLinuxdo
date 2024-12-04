@@ -5,7 +5,7 @@ on:
     branches:
       - main
     tags:
-      - 'v*'  # 当推送版本标签时触发
+      - 'v*'
   pull_request:
     branches:
       - main
@@ -17,41 +17,48 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        architecture: [x64, x86, arm]
+        architecture: [x64, x86, arm64, arm]
         include:
           - os: ubuntu-latest
-            architecture: arm64
+            architecture: x64
             platform: linux
+            rid: linux-x64
           - os: windows-latest
-            architecture: arm64
+            architecture: x64
             platform: windows
+            rid: win-x64
           - os: macos-latest
-            architecture: arm64
+            architecture: x64
             platform: macos
+            rid: osx-x64
           - os: ubuntu-latest
-            architecture: x64
+            architecture: arm64
             platform: linux
+            rid: linux-arm64
           - os: windows-latest
-            architecture: x64
+            architecture: arm64
             platform: windows
+            rid: win-arm64
           - os: macos-latest
-            architecture: x64
+            architecture: arm64
             platform: macos
+            rid: osx-arm64
           - os: ubuntu-latest
             architecture: x86
             platform: linux
+            rid: linux-x86
           - os: windows-latest
             architecture: x86
             platform: windows
+            rid: win-x86
           - os: ubuntu-latest
             architecture: arm
             platform: linux
+            rid: linux-arm
           - os: windows-latest
             architecture: arm
             platform: windows
-          - os: macos-latest
-            architecture: arm
-            platform: macos
+            rid: win-arm
 
     steps:
     - name: Checkout code
@@ -85,30 +92,50 @@ jobs:
     - name: Install dependencies
       run: dotnet restore
 
-    - name: Build
+    # Build self-contained version
+    - name: Build Self-Contained
       run: |
-        dotnet publish -c Release -r ${{ matrix.os }}-${{ matrix.architecture }} \
+        dotnet publish -c Release -r ${{ matrix.rid }} \
         --self-contained true \
         -p:PublishSingleFile=true \
         -p:PublishTrimmed=true \
         -p:EnableCompressionInSingleFile=true \
         -p:Version=${{ steps.version.outputs.version }}
 
+    # Build framework-dependent version
+    - name: Build Framework-Dependent
+      run: |
+        dotnet publish -c Release -r ${{ matrix.rid }} \
+        --self-contained false \
+        -p:PublishSingleFile=true \
+        -p:Version=${{ steps.version.outputs.version }}
+
     - name: Prepare artifacts
       shell: bash
       run: |
-        cd ./bin/Release/net8.0/${{ matrix.os }}-${{ matrix.architecture }}/publish/
+        # Prepare self-contained version
+        cd ./bin/Release/net8.0/${{ matrix.rid }}/publish/
         if [[ "${{ matrix.platform }}" == "windows" ]]; then
-          mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_Release.exe
+          mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.exe
         else
-          mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_Release
+          mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained
+        fi
+        cd ../../../../
+
+        # Prepare framework-dependent version
+        cd ./bin/Release/net8.0/${{ matrix.rid }}/publish/
+        if [[ "${{ matrix.platform }}" == "windows" ]]; then
+          mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.exe
+        else
+          mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent
         fi
 
     - name: Upload artifact
       uses: actions/upload-artifact@v3
       with:
         name: MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}
-        path: ./bin/Release/net8.0/${{ matrix.os }}-${{ matrix.architecture }}/publish/MoyuLinuxdo_*
+        path: |
+          ./bin/Release/net8.0/${{ matrix.rid }}/publish/MoyuLinuxdo_*
         if-no-files-found: error
 
   release:
