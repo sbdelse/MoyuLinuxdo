@@ -16,8 +16,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        architecture: [x64, x86, arm64, arm]
         include:
           - os: ubuntu-latest
             architecture: x64
@@ -94,36 +92,28 @@ jobs:
 
     # Build self-contained version
     - name: Build Self-Contained
-      run: |
-        dotnet publish -c Release -r ${{ matrix.rid }} \
-        --self-contained true \
-        -p:PublishSingleFile=true \
-        -p:PublishTrimmed=true \
-        -p:EnableCompressionInSingleFile=true \
-        -p:Version=${{ steps.version.outputs.version }}
+      shell: bash
+      run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true -p:Version=${{ steps.version.outputs.version }}
 
     # Build framework-dependent version
     - name: Build Framework-Dependent
-      run: |
-        dotnet publish -c Release -r ${{ matrix.rid }} \
-        --self-contained false \
-        -p:PublishSingleFile=true \
-        -p:Version=${{ steps.version.outputs.version }}
+      shell: bash
+      run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained false -p:PublishSingleFile=true -p:Version=${{ steps.version.outputs.version }}
 
     - name: Prepare artifacts
       shell: bash
       run: |
         # Prepare self-contained version
-        cd ./bin/Release/net8.0/${{ matrix.rid }}/publish/
+        cd bin/Release/net8.0/${{ matrix.rid }}/publish/
         if [[ "${{ matrix.platform }}" == "windows" ]]; then
           mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.exe
         else
           mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained
         fi
-        cd ../../../../
+        cd -
 
         # Prepare framework-dependent version
-        cd ./bin/Release/net8.0/${{ matrix.rid }}/publish/
+        cd bin/Release/net8.0/${{ matrix.rid }}/publish/
         if [[ "${{ matrix.platform }}" == "windows" ]]; then
           mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.exe
         else
@@ -135,7 +125,7 @@ jobs:
       with:
         name: MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}
         path: |
-          ./bin/Release/net8.0/${{ matrix.rid }}/publish/MoyuLinuxdo_*
+          bin/Release/net8.0/${{ matrix.rid }}/publish/MoyuLinuxdo_*
         if-no-files-found: error
 
   release:
