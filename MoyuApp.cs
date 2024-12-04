@@ -20,6 +20,7 @@ namespace MoyuLinuxdo
         private List<List<Topic>> loadedTopicPages = new List<List<Topic>>();
         private int currentTopicPage = 0;
         private Dictionary<int, string> categoryNames = new Dictionary<int, string>();
+        private readonly JsonSerializerOptions _jsonOptions;
 
         public MoyuApp()
         {
@@ -28,6 +29,11 @@ namespace MoyuLinuxdo
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0");
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             client.DefaultRequestHeaders.Add("Accept", "application/json; q=0.01");
+
+            _jsonOptions = new JsonSerializerOptions
+            {
+                TypeInfoResolver = AppJsonContext.Default
+            };
 
             settings = LoadSettings();
             if (!string.IsNullOrEmpty(settings.Cookie))
@@ -140,11 +146,7 @@ namespace MoyuLinuxdo
                 var response = await client.GetAsync(url);
                 response.EnsureSuccessStatusCode();
                 var content = await response.Content.ReadAsStringAsync();
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                };
-                var latest = JsonSerializer.Deserialize<LatestResponse>(content, options);
+                var latest = JsonSerializer.Deserialize<LatestResponse>(content, _jsonOptions);
 
                 if (latest?.TopicList?.Topics == null || latest.TopicList.Topics.Count == 0)
                 {
@@ -393,11 +395,7 @@ namespace MoyuLinuxdo
                 var topicResponse = await client.GetAsync(topicUrl);
                 topicResponse.EnsureSuccessStatusCode();
                 var topicContent = await topicResponse.Content.ReadAsStringAsync();
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                };
-                var topicData = JsonSerializer.Deserialize<TopicResponse>(topicContent, options);
+                var topicData = JsonSerializer.Deserialize<TopicResponse>(topicContent, _jsonOptions);
                 var postIds = topicData?.PostStream?.Stream?.Skip(cachedPosts.Count).Take(limit).ToList();
 
                 if (postIds == null || postIds.Count == 0)
@@ -417,7 +415,7 @@ namespace MoyuLinuxdo
                     var postsResponse = await client.GetAsync(postsUrl);
                     postsResponse.EnsureSuccessStatusCode();
                     var postsContent = await postsResponse.Content.ReadAsStringAsync();
-                    var postsData = JsonSerializer.Deserialize<PostsResponse>(postsContent, options);
+                    var postsData = JsonSerializer.Deserialize<PostsResponse>(postsContent, _jsonOptions);
                     var posts = postsData?.PostStream?.Posts ?? null;
 
                     if (posts != null)
@@ -583,7 +581,7 @@ namespace MoyuLinuxdo
                 if (File.Exists("settings.json"))
                 {
                     var content = File.ReadAllText("settings.json");
-                    return JsonSerializer.Deserialize<AppSettings>(content) ?? new AppSettings();
+                    return JsonSerializer.Deserialize<AppSettings>(content, _jsonOptions) ?? new AppSettings();
                 }
                 else
                 {
@@ -729,11 +727,7 @@ namespace MoyuLinuxdo
                 var response = await client.GetAsync("https://linux.do/about.json");
                 response.EnsureSuccessStatusCode();
                 var content = await response.Content.ReadAsStringAsync();
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                };
-                var aboutData = JsonSerializer.Deserialize<AboutResponse>(content, options);
+                var aboutData = JsonSerializer.Deserialize<AboutResponse>(content, _jsonOptions);
 
                 categoryNames.Clear();
                 if (aboutData?.Categories != null)
