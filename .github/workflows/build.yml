@@ -2,13 +2,8 @@ name: Build and Publish
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*'
-  pull_request:
-    branches:
-      - main
 
 jobs:
   build:
@@ -100,10 +95,10 @@ jobs:
         cd release/self-contained
         if [[ "${{ matrix.platform }}" == "windows" ]]; then
           mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.exe
-          7z a ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.7z *
+          7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.7z *
         else
           mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained
-          7z a ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.7z *
+          7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.7z *
         fi
         cd ../..
 
@@ -112,10 +107,10 @@ jobs:
         cd release/framework-dependent
         if [[ "${{ matrix.platform }}" == "windows" ]]; then
           mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.exe
-          7z a ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.7z *
+          7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.7z *
         else
           mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent
-          7z a ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.7z *
+          7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.7z *
         fi
         cd ../..
 
