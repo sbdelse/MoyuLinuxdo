@@ -93,18 +93,18 @@ jobs:
     # Build self-contained version
     - name: Build Self-Contained
       shell: bash
-      run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true -p:Version=${{ steps.version.outputs.version }}
+      run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true -p:Version=${{ steps.version.outputs.version }} -o ./output/self-contained/${{ matrix.rid }}
 
     # Build framework-dependent version
     - name: Build Framework-Dependent
       shell: bash
-      run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained false -p:PublishSingleFile=true -p:Version=${{ steps.version.outputs.version }}
+      run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained false -p:PublishSingleFile=true -p:Version=${{ steps.version.outputs.version }} -o ./output/framework-dependent/${{ matrix.rid }}
 
     - name: Prepare artifacts
       shell: bash
       run: |
         # Prepare self-contained version
-        cd bin/Release/net8.0/${{ matrix.rid }}/publish/
+        cd output/self-contained/${{ matrix.rid }}
         if [[ "${{ matrix.platform }}" == "windows" ]]; then
           mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.exe
         else
@@ -113,7 +113,7 @@ jobs:
         cd -
 
         # Prepare framework-dependent version
-        cd bin/Release/net8.0/${{ matrix.rid }}/publish/
+        cd output/framework-dependent/${{ matrix.rid }}
         if [[ "${{ matrix.platform }}" == "windows" ]]; then
           mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.exe
         else
@@ -125,7 +125,8 @@ jobs:
       with:
         name: MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}
         path: |
-          bin/Release/net8.0/${{ matrix.rid }}/publish/MoyuLinuxdo_*
+          output/self-contained/${{ matrix.rid }}/MoyuLinuxdo_* 
+          output/framework-dependent/${{ matrix.rid }}/MoyuLinuxdo_*
         if-no-files-found: error
 
   release:
