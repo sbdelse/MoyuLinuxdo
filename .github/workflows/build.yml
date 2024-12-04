@@ -41,22 +41,6 @@ jobs:
             architecture: arm64
             platform: macos
             rid: osx-arm64
-          - os: ubuntu-latest
-            architecture: x86
-            platform: linux
-            rid: linux-x86
-          - os: windows-latest
-            architecture: x86
-            platform: windows
-            rid: win-x86
-          - os: ubuntu-latest
-            architecture: arm
-            platform: linux
-            rid: linux-arm
-          - os: windows-latest
-            architecture: arm
-            platform: windows
-            rid: win-arm
 
     steps:
     - name: Checkout code
@@ -100,33 +84,46 @@ jobs:
       shell: bash
       run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained false -p:PublishSingleFile=true -p:Version=${{ steps.version.outputs.version }} -o ./output/framework-dependent/${{ matrix.rid }}
 
-    - name: Prepare artifacts
+    - name: Install 7-Zip
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: choco install 7zip.portable -y
+
+    - name: Prepare and Compress Artifacts
       shell: bash
       run: |
+        # Create directories for both versions
+        mkdir -p release/self-contained release/framework-dependent
+
         # Prepare self-contained version
-        cd output/self-contained/${{ matrix.rid }}
+        cp -r output/self-contained/${{ matrix.rid }}/* release/self-contained/
+        cd release/self-contained
         if [[ "${{ matrix.platform }}" == "windows" ]]; then
           mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.exe
+          7z a ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.7z *
         else
           mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained
+          7z a ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.7z *
         fi
-        cd -
+        cd ../..
 
         # Prepare framework-dependent version
-        cd output/framework-dependent/${{ matrix.rid }}
+        cp -r output/framework-dependent/${{ matrix.rid }}/* release/framework-dependent/
+        cd release/framework-dependent
         if [[ "${{ matrix.platform }}" == "windows" ]]; then
           mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.exe
+          7z a ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.7z *
         else
           mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent
+          7z a ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.7z *
         fi
+        cd ../..
 
     - name: Upload artifact
       uses: actions/upload-artifact@v3
       with:
         name: MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}
-        path: |
-          output/self-contained/${{ matrix.rid }}/MoyuLinuxdo_* 
-          output/framework-dependent/${{ matrix.rid }}/MoyuLinuxdo_*
+        path: MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}*.7z
         if-no-files-found: error
 
   release:
@@ -142,7 +139,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          */MoyuLinuxdo_*
+          */MoyuLinuxdo_*.7z
         draft: false
         prerelease: false
         generate_release_notes: true
