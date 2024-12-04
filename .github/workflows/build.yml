@@ -82,7 +82,7 @@ jobs:
     # Build framework-dependent version
     - name: Build Framework-Dependent
       shell: bash
-      run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained false -p:PublishSingleFile=true -p:Version=${{ steps.version.outputs.version }} -o ./output/framework-dependent/${{ matrix.rid }}
+      run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained false -p:Version=${{ steps.version.outputs.version }} -o ./output/framework-dependent/${{ matrix.rid }}
 
     - name: Install 7-Zip
       if: matrix.os == 'windows-latest'
