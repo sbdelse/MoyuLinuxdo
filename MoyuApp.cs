@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using System.Net.Http;
-using System.Text.Json;
-using System.Linq;
-using System.IO;
+﻿using System.Text.Json;
 using HtmlAgilityPack;
 using System.Net.Http.Headers;
 using System.Text.RegularExpressions;
@@ -54,9 +48,24 @@ namespace MoyuLinuxdo
                 bool topicsLoaded = await LoadTopicPage(currentTopicPage);
                 if (!topicsLoaded)
                 {
-                    Console.WriteLine("无法加载主题列表。按任意键退出...");
-                    Console.ReadKey();
-                    return;
+                    Console.WriteLine("\n无法加载主题列表。");
+                    Console.WriteLine("1. 进入设置界面设置 Cookie");
+                    Console.WriteLine("2. 重试加载");
+                    Console.WriteLine("3. 退出程序");
+                    Console.Write("请选择操作 (1-3): ");
+                    
+                    var key = Console.ReadKey(true);
+                    switch (key.KeyChar)
+                    {
+                        case '1':
+                            SettingsMenu();
+                            continue;
+                        case '2':
+                            continue;
+                        case '3':
+                        default:
+                            return;
+                    }
                 }
 
                 DisplayTopics(currentTopicPage);
@@ -133,45 +142,106 @@ namespace MoyuLinuxdo
 
         private async Task<bool> LoadTopicPage(int pageNumber)
         {
-            try
+            int maxRetries = 3;
+            int currentRetry = 0;
+            int retryDelayMs = 2000;
+
+            while (currentRetry < maxRetries)
             {
-                if (loadedTopicPages.Count > pageNumber)
+                try
                 {
-                    topics = loadedTopicPages[pageNumber];
-                    return true;
-                }
-
-                string url = pageNumber == 0 ? "https://linux.do/latest.json" :
-                    $"https://linux.do/latest.json?no_definitions=true&page={pageNumber}";
-                var response = await client.GetAsync(url);
-                response.EnsureSuccessStatusCode();
-                var content = await response.Content.ReadAsStringAsync();
-                var latest = JsonSerializer.Deserialize<LatestResponse>(content, _jsonOptions);
-
-                if (latest?.TopicList?.Topics == null || latest.TopicList.Topics.Count == 0)
-                {
-                    return false;
-                }
-
-                topics = latest.TopicList.Topics.Take(settings.TopicsPerPage).ToList();
-                loadedTopicPages.Add(topics);
-
-                usersDict = new Dictionary<int, User>();
-                if (latest.Users != null)
-                {
-                    foreach (var user in latest.Users)
+                    if (loadedTopicPages.Count > pageNumber)
                     {
-                        if (user != null)
+                        topics = loadedTopicPages[pageNumber];
+                        return true;
+                    }
+
+                    UpdateRequestHeaders();
+
+                    string url = pageNumber == 0 ? "https://linux.do/latest.json" :
+                        $"https://linux.do/latest.json?no_definitions=true&page={pageNumber}";
+                    var response = await client.GetAsync(url);
+                    
+                    // 检查是否遇到 CF 验证
+                    if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                    {
+                        currentRetry++;
+                        if (currentRetry < maxRetries)
                         {
-                            usersDict[user.Id] = user;
+                            Console.WriteLine($"\n遇到 Cloudflare 验证，等待 {retryDelayMs/1000} 秒后重试 ({currentRetry}/{maxRetries})...");
+                            Console.WriteLine("提示：如果持续失败，可以尝试在设置中配置有效的 Cookie");
+                            await Task.Delay(retryDelayMs);
+                            retryDelayMs *= 2;
+                            continue;
+                        }
+                        return false;
+                    }
+
+                    response.EnsureSuccessStatusCode();
+                    var content = await response.Content.ReadAsStringAsync();
+                    var latest = JsonSerializer.Deserialize<LatestResponse>(content, _jsonOptions);
+
+                    if (latest?.TopicList?.Topics == null || latest.TopicList.Topics.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    topics = latest.TopicList.Topics.Take(settings.TopicsPerPage).ToList();
+                    loadedTopicPages.Add(topics);
+
+                    usersDict = new Dictionary<int, User>();
+                    if (latest.Users != null)
+                    {
+                        foreach (var user in latest.Users)
+                        {
+                            if (user != null)
+                            {
+                                usersDict[user.Id] = user;
+                            }
                         }
                     }
+                    return true;
                 }
-                return true;
+                catch (Exception ex)
+                {
+                    currentRetry++;
+                    if (currentRetry < maxRetries)
+                    {
+                        Console.WriteLine($"\n加载失败，等待 {retryDelayMs/1000} 秒后重试 ({currentRetry}/{maxRetries})...");
+                        Console.WriteLine("提示：如果持续失败，可以尝试在设置中配置有效的 Cookie");
+                        await Task.Delay(retryDelayMs);
+                        retryDelayMs *= 2;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"\n加载失败: {ex.Message}");
+                        return false;
+                    }
+                }
             }
-            catch
+            return false;
+        }
+
+        private void UpdateRequestHeaders()
+        {
+            client.DefaultRequestHeaders.Clear();
+            client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+            client.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
+            client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7");
+            client.DefaultRequestHeaders.Add("Accept-Encoding", "gzip, deflate, br");
+            client.DefaultRequestHeaders.Add("Connection", "keep-alive");
+            client.DefaultRequestHeaders.Add("Upgrade-Insecure-Requests", "1");
+            client.DefaultRequestHeaders.Add("Sec-Ch-Ua", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"");
+            client.DefaultRequestHeaders.Add("Sec-Ch-Ua-Mobile", "?0");
+            client.DefaultRequestHeaders.Add("Sec-Ch-Ua-Platform", "\"Windows\"");
+            client.DefaultRequestHeaders.Add("Sec-Fetch-Dest", "document");
+            client.DefaultRequestHeaders.Add("Sec-Fetch-Mode", "navigate");
+            client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "none");
+            client.DefaultRequestHeaders.Add("Sec-Fetch-User", "?1");
+
+            if (!string.IsNullOrEmpty(settings.Cookie))
             {
-                return false;
+                client.DefaultRequestHeaders.Add("Cookie", settings.Cookie);
             }
         }
 
@@ -740,7 +810,7 @@ namespace MoyuLinuxdo
         {
             if (string.IsNullOrEmpty(settings.Cookie))
             {
-                Console.WriteLine("\n需要设置Cookie才能点赞。按任意键继续...");
+                Console.WriteLine("\n要设置Cookie才能点赞。按任意键继续...");
                 Console.ReadKey();
                 return;
             }
