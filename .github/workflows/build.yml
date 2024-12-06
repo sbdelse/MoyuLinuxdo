@@ -11,33 +11,26 @@ permissions:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            architecture: x64
+          - architecture: x64
             platform: linux
             rid: linux-x64
-          - os: windows-latest
-            architecture: x64
+          - architecture: x64
             platform: windows
             rid: win-x64
-          - os: macos-latest
-            architecture: x64
+          - architecture: x64
             platform: macos
             rid: osx-x64
-          - os: ubuntu-latest
-            architecture: arm64
+          - architecture: arm64
             platform: linux
             rid: linux-arm64
-          - os: windows-latest
-            architecture: arm64
+          - architecture: arm64
             platform: windows
             rid: win-arm64
-          - os: macos-latest
-            architecture: arm64
+          - architecture: arm64
             platform: macos
             rid: osx-arm64
 
@@ -73,15 +66,36 @@ jobs:
     - name: Install dependencies
       run: dotnet restore
 
-    # Build self-contained version
+    # 设置 QEMU 和 Docker，支持多架构构建
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+    
+    # 启用交叉编译
+    - name: Setup cross-compilation
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+        
+    # 修改构建步骤，添加交叉编译支持
     - name: Build Self-Contained
-      shell: bash
-      run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true -p:Version=${{ steps.version.outputs.version }} -o ./output/self-contained/${{ matrix.rid }}
+      run: |
+        if [[ "${{ matrix.rid }}" == *"arm64"* ]]; then
+          export CppCompilerAndLinker=aarch64-linux-gnu-g++
+        fi
+        dotnet publish -c Release -r ${{ matrix.rid }} --self-contained true \
+          -p:PublishSingleFile=true -p:PublishTrimmed=true \
+          -p:EnableCompressionInSingleFile=true \
+          -p:Version=${{ steps.version.outputs.version }} \
+          -o ./output/self-contained/${{ matrix.rid }}
 
-    # Build framework-dependent version
     - name: Build Framework-Dependent
-      shell: bash
-      run: dotnet publish -c Release -r ${{ matrix.rid }} --self-contained false -p:Version=${{ steps.version.outputs.version }} -o ./output/framework-dependent/${{ matrix.rid }}
+      run: |
+        if [[ "${{ matrix.rid }}" == *"arm64"* ]]; then
+          export CppCompilerAndLinker=aarch64-linux-gnu-g++
+        fi
+        dotnet publish -c Release -r ${{ matrix.rid }} --self-contained false \
+          -p:Version=${{ steps.version.outputs.version }} \
+          -o ./output/framework-dependent/${{ matrix.rid }}
 
     - name: Install 7-Zip
       if: matrix.os == 'windows-latest'

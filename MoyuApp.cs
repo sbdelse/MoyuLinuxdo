@@ -250,16 +250,23 @@ namespace MoyuLinuxdo
             bool exit = false;
             List<Post> cachedPosts = new List<Post>();
             bool isPreloading = false;
-            bool initialLoad = await LoadPosts(topic.Id, cachedPosts, Math.Max(10, settings.RepliesPerTopic));
+            int totalPosts = 0;
+            string topicUrl = $"https://linux.do/t/topic/{topic.Id}.json";
+            var topicResponse = await client.GetAsync(topicUrl);
+            if (topicResponse.IsSuccessStatusCode)
+            {
+                var topicContent = await topicResponse.Content.ReadAsStringAsync();
+                var topicData = JsonSerializer.Deserialize<TopicResponse>(topicContent, _jsonOptions);
+                totalPosts = topicData?.PostStream?.Stream?.Count ?? 0;
+            }
+
+            bool initialLoad = await LoadPosts(topic.Id, cachedPosts, Math.Max(20, settings.RepliesPerTopic));
             if (!initialLoad)
             {
                 Console.WriteLine("无法加载帖子内容。按任意键返回...");
                 Console.ReadKey();
                 return;
             }
-
-            DisplayPosts(cachedPosts.Take(settings.RepliesPerTopic).ToList());
-            _ = PreloadNextBatch(topic.Id, cachedPosts);
 
             while (!exit)
             {
@@ -269,25 +276,20 @@ namespace MoyuLinuxdo
                 int start = page * settings.RepliesPerTopic;
                 int end = Math.Min(start + settings.RepliesPerTopic, cachedPosts.Count);
 
-                if (!isPreloading && cachedPosts.Count < 100 && end + settings.RepliesPerTopic >= cachedPosts.Count)
+                if (!isPreloading && end + settings.RepliesPerTopic >= cachedPosts.Count)
                 {
                     isPreloading = true;
-                    _ = PreloadNextBatch(topic.Id, cachedPosts).ContinueWith(_ => isPreloading = false);
-                }
-
-                if (start >= cachedPosts.Count)
-                {
-                    Console.WriteLine("已经到达帖子末尾。");
-                    page--;
-                    Console.WriteLine("按任意键返回上一页...");
-                    Console.ReadKey();
-                    continue;
+                    _ = PreloadNextBatch(topic.Id, cachedPosts)
+                        .ContinueWith(t => { isPreloading = false; });
                 }
 
                 var postsToDisplay = cachedPosts.Skip(start).Take(settings.RepliesPerTopic).ToList();
-                DisplayPosts(postsToDisplay);
+                DisplayPosts(postsToDisplay, start);
 
-                Console.WriteLine("输入b返回，n下一页，p上一页，r刷新，w回复，l点赞，k收藏");
+                int totalPages = (int)Math.Ceiling(totalPosts / (double)settings.RepliesPerTopic);
+                Console.WriteLine($"共 {totalPosts} 个回复，当前第 {page + 1} 页，共 {totalPages} 页");
+                Console.WriteLine(new string('=', Console.WindowWidth));
+                Console.WriteLine("输入b返回，n下一页，p上一页，j跳转，r刷新，w回复，l点赞，k收藏");
                 var keyInfo = Console.ReadKey(true);
                 char command = char.ToLower(keyInfo.KeyChar);
                 switch (command)
@@ -300,7 +302,7 @@ namespace MoyuLinuxdo
                         {
                             page++;
                         }
-                        else if (cachedPosts.Count < 100)
+                        else
                         {
                             bool additionalPostsLoaded = await LoadPosts(topic.Id, cachedPosts, 50);
                             if (additionalPostsLoaded)
@@ -312,11 +314,6 @@ namespace MoyuLinuxdo
                                 Console.WriteLine("\n已经是最后一页。");
                                 Console.ReadKey();
                             }
-                        }
-                        else
-                        {
-                            Console.WriteLine("\n已经是最后一页。");
-                            Console.ReadKey();
                         }
                         break;
                     case 'p':
@@ -334,7 +331,7 @@ namespace MoyuLinuxdo
                         page = 0;
                         cachedPosts.Clear();
                         Console.WriteLine("正在刷新帖子内容...");
-                        bool refreshed = await LoadPosts(topic.Id, cachedPosts, Math.Max(10, settings.RepliesPerTopic));
+                        bool refreshed = await LoadPosts(topic.Id, cachedPosts, Math.Max(20, settings.RepliesPerTopic));
                         if (!refreshed)
                         {
                             Console.WriteLine("刷新失败，按任意键回...");
@@ -351,6 +348,9 @@ namespace MoyuLinuxdo
                     case 'k':
                         await HandleBookmark(topic.Id, postsToDisplay);
                         break;
+                    case 'j':
+                        page = await HandleJump(topic.Id, cachedPosts, page, totalPosts);
+                        break;
                     default:
                         Console.WriteLine("无效的命令，按任意键继续...");
                         Console.ReadKey();
@@ -363,21 +363,12 @@ namespace MoyuLinuxdo
         {
             try
             {
-                if (cachedPosts.Count >= 100) return;
-
-                int batchSize = 50;
-                if (cachedPosts.Count + batchSize > 100)
-                {
-                    batchSize = 100 - cachedPosts.Count;
-                }
-
-                await LoadPosts(topicId, cachedPosts, batchSize);
+                await LoadPosts(topicId, cachedPosts, 50);
             }
             catch
             {
                 await Task.Delay(3000);
                 await LoadPosts(topicId, cachedPosts, 50);
-                return;
             }
         }
 
@@ -385,29 +376,25 @@ namespace MoyuLinuxdo
         {
             try
             {
-                if (cachedPosts.Count >= 100) return true;
-                if (cachedPosts.Count + limit > 100)
-                {
-                    limit = 100 - cachedPosts.Count;
-                }
-
                 string topicUrl = $"https://linux.do/t/topic/{topicId}.json";
                 var topicResponse = await client.GetAsync(topicUrl);
                 topicResponse.EnsureSuccessStatusCode();
                 var topicContent = await topicResponse.Content.ReadAsStringAsync();
                 var topicData = JsonSerializer.Deserialize<TopicResponse>(topicContent, _jsonOptions);
-                var postIds = topicData?.PostStream?.Stream?.Skip(cachedPosts.Count).Take(limit).ToList();
+                var allPostIds = topicData?.PostStream?.Stream ?? new List<int>();
+                var loadedPostIds = cachedPosts.Select(p => p.Id).ToHashSet();
+                var unloadedPostIds = allPostIds.Where(id => !loadedPostIds.Contains(id)).Take(limit).ToList();
 
-                if (postIds == null || postIds.Count == 0)
+                if (unloadedPostIds.Count == 0)
                 {
                     return false;
                 }
 
                 List<Post> allPosts = new List<Post>();
                 int batchSize = 50;
-                for (int i = 0; i < postIds.Count; i += batchSize)
+                for (int i = 0; i < unloadedPostIds.Count; i += batchSize)
                 {
-                    var batchIds = postIds.Skip(i).Take(batchSize).ToList();
+                    var batchIds = unloadedPostIds.Skip(i).Take(batchSize).ToList();
                     string postsUrl = $"https://linux.do/t/{topicId}/posts.json?";
                     postsUrl += string.Join("&", batchIds.Select(id => $"post_ids[]={id}"));
                     postsUrl += "&include_suggested=true";
@@ -426,7 +413,7 @@ namespace MoyuLinuxdo
 
                 var newPosts = allPosts.Where(p => !cachedPosts.Any(cp => cp.Id == p.Id)).ToList();
                 cachedPosts.AddRange(newPosts);
-                return true;
+                return newPosts.Count > 0;
             }
             catch
             {
@@ -434,7 +421,7 @@ namespace MoyuLinuxdo
             }
         }
 
-        private void DisplayPosts(List<Post> posts)
+        private void DisplayPosts(List<Post> posts, int startIndex)
         {
             int consoleWidth = Console.WindowWidth;
             string dividerLine = new string('-', consoleWidth);
@@ -453,7 +440,8 @@ namespace MoyuLinuxdo
                 string content = StripHtml(post.Post.Cooked ?? "");
 
                 Console.WriteLine(dividerLine);
-                Console.WriteLine("#{0} {1,-25}{2,-15}获赞 {3}", 
+                Console.WriteLine("No.{0} #{1} {2,-25}{3,-15}获赞 {4}", 
+                    (startIndex + post.Index).ToString().PadRight(4),
                     post.Index.ToString().PadRight(3), 
                     userInfo.PadRight(25), 
                     timeStr.PadRight(15), 
@@ -598,12 +586,13 @@ namespace MoyuLinuxdo
         {
             try
             {
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                var content = JsonSerializer.Serialize(settings, options);
+                var content = JsonSerializer.Serialize(settings, _jsonOptions);
                 File.WriteAllText("settings.json", content);
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"\n保存设置失败：{ex.Message}");
+                Console.ReadKey();
             }
         }
 
@@ -656,13 +645,13 @@ namespace MoyuLinuxdo
                 return;
             }
 
-            Console.WriteLine("是否需要引用某个回复？(y/N)");
+            Console.WriteLine("是否要引用某个回复？(y/N)");
             var quoteChoice = Console.ReadKey(true);
             int? replyToPostNumber = null;
 
             if (char.ToLower(quoteChoice.KeyChar) == 'y')
             {
-                Console.WriteLine("\n请输入要引用的回复序号（1-{0}）：", currentPosts.Count);
+                Console.WriteLine("\n请输入要用的回复序号（1-{0}）：", currentPosts.Count);
                 if (int.TryParse(Console.ReadLine(), out int quoteIndex) && 
                     quoteIndex >= 1 && quoteIndex <= currentPosts.Count)
                 {
@@ -797,7 +786,7 @@ namespace MoyuLinuxdo
         {
             if (string.IsNullOrEmpty(settings.Cookie))
             {
-                Console.WriteLine("\n需要设置Cookie才能收藏。按任意键继续...");
+                Console.WriteLine("\n需要设置Cookie才能收藏按任意键继续...");
                 Console.ReadKey();
                 return;
             }
@@ -846,6 +835,133 @@ namespace MoyuLinuxdo
                     Console.WriteLine($"\n收藏出错：{ex.Message}。按任意键继续...");
                 }
                 Console.ReadKey();
+            }
+        }
+
+        private async Task<int> HandleJump(int topicId, List<Post> cachedPosts, int currentPage, int totalPosts)
+        {
+            Console.WriteLine("\n跳转选项：");
+            Console.WriteLine("1. 跳转到指定页码");
+            Console.WriteLine("2. 跳转到指定楼层");
+            Console.WriteLine("3. 跳转到最后一页");
+            Console.Write("请选择（1-3）：");
+
+            var choice = Console.ReadKey(true);
+            Console.WriteLine(choice.KeyChar);
+
+            switch (choice.KeyChar)
+            {
+                case '1':
+                    Console.Write("请输入页码：");
+                    if (int.TryParse(Console.ReadLine(), out int pageNum) && pageNum > 0)
+                    {
+                        int targetPage = pageNum - 1;
+                        int requiredPosts = (targetPage + 1) * settings.RepliesPerTopic;
+                        
+                        while (cachedPosts.Count < requiredPosts)
+                        {
+                            bool loaded = await LoadPosts(topicId, cachedPosts, 50);
+                            if (!loaded) break;
+                        }
+
+                        if (targetPage * settings.RepliesPerTopic < cachedPosts.Count)
+                        {
+                            return targetPage;
+                        }
+                        else
+                        {
+                            Console.WriteLine("页码超出范围。按任意键继续...");
+                            Console.ReadKey();
+                        }
+                    }
+                    break;
+
+                case '2':
+                    Console.Write($"请输入楼层号（1-{totalPosts}）：");
+                    if (int.TryParse(Console.ReadLine(), out int postNum) && postNum > 0 && postNum <= totalPosts)
+                    {
+                        int targetPage = (postNum - 1) / settings.RepliesPerTopic;
+                        int requiredPosts = (targetPage + 1) * settings.RepliesPerTopic;
+
+                        while (cachedPosts.Count < requiredPosts)
+                        {
+                            bool loaded = await LoadPosts(topicId, cachedPosts, 50);
+                            if (!loaded) break;
+                        }
+
+                        if (targetPage * settings.RepliesPerTopic < cachedPosts.Count)
+                        {
+                            return targetPage;
+                        }
+                        else
+                        {
+                            Console.WriteLine("楼层号超出范围。按任意键继续...");
+                            Console.ReadKey();
+                        }
+                    }
+                    break;
+
+                case '3':
+                    while (await LoadPosts(topicId, cachedPosts, 50)) { }
+                    if (cachedPosts.Count > 0)
+                    {
+                        return (cachedPosts.Count - 1) / settings.RepliesPerTopic;
+                    }
+                    break;
+            }
+            return currentPage;
+        }
+
+        private async Task<bool> LoadPostsConcurrently(int topicId, List<Post> cachedPosts, List<int> postIds)
+        {
+            try
+            {
+                var tasks = new List<Task<List<Post>>>();
+                int batchSize = 50;
+                
+                for (int i = 0; i < postIds.Count; i += batchSize)
+                {
+                    var batchIds = postIds.Skip(i).Take(batchSize).ToList();
+                    tasks.Add(Task.Run(async () =>
+                    {
+                        string postsUrl = $"https://linux.do/t/{topicId}/posts.json?";
+                        postsUrl += string.Join("&", batchIds.Select(id => $"post_ids[]={id}"));
+                        postsUrl += "&include_suggested=true";
+
+                        var postsResponse = await client.GetAsync(postsUrl);
+                        postsResponse.EnsureSuccessStatusCode();
+                        var postsContent = await postsResponse.Content.ReadAsStringAsync();
+                        var postsData = JsonSerializer.Deserialize<PostsResponse>(postsContent, _jsonOptions);
+                        return postsData?.PostStream?.Posts ?? new List<Post>();
+                    }));
+
+                    if (tasks.Count >= 5) // 用户执行跳转操作时，限制 5 个并发请求
+                    {
+                        var completedPosts = await Task.WhenAll(tasks);
+                        foreach (var posts in completedPosts)
+                        {
+                            var newPosts = posts.Where(p => !cachedPosts.Any(cp => cp.Id == p.Id)).ToList();
+                            cachedPosts.AddRange(newPosts);
+                        }
+                        tasks.Clear();
+                    }
+                }
+
+                if (tasks.Count > 0)
+                {
+                    var completedPosts = await Task.WhenAll(tasks);
+                    foreach (var posts in completedPosts)
+                    {
+                        var newPosts = posts.Where(p => !cachedPosts.Any(cp => cp.Id == p.Id)).ToList();
+                        cachedPosts.AddRange(newPosts);
+                    }
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
     }
