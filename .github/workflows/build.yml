@@ -32,9 +32,6 @@ jobs:
           - architecture: arm64
             platform: macos
             rid: osx-arm64
-      # 并行构建配置
-      fail-fast: false
-      max-parallel: 6
 
     steps:
     - name: Checkout code
@@ -78,69 +75,61 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
         
-    # 并行构建
-    - name: Build All Variants
+    # 修改构建步骤，添加交叉编译支持
+    - name: Build Self-Contained
       run: |
         if [[ "${{ matrix.rid }}" == *"arm64"* ]]; then
           export CppCompilerAndLinker=aarch64-linux-gnu-g++
         fi
-        
-        # 并行构建 self-contained 和 framework-dependent 版本
-        {
-          dotnet publish -c Release -r ${{ matrix.rid }} --self-contained true \
-            -p:PublishSingleFile=true -p:PublishTrimmed=true \
-            -p:EnableCompressionInSingleFile=true \
-            -p:Version=${{ steps.version.outputs.version }} \
-            -o ./output/self-contained/${{ matrix.rid }} &
-          
-          dotnet publish -c Release -r ${{ matrix.rid }} --self-contained false \
-            -p:Version=${{ steps.version.outputs.version }} \
-            -o ./output/framework-dependent/${{ matrix.rid }} &
-          
-          wait
-        }
+        dotnet publish -c Release -r ${{ matrix.rid }} --self-contained true \
+          -p:PublishSingleFile=true -p:PublishTrimmed=true \
+          -p:EnableCompressionInSingleFile=true \
+          -p:Version=${{ steps.version.outputs.version }} \
+          -o ./output/self-contained/${{ matrix.rid }}
+
+    - name: Build Framework-Dependent
+      run: |
+        if [[ "${{ matrix.rid }}" == *"arm64"* ]]; then
+          export CppCompilerAndLinker=aarch64-linux-gnu-g++
+        fi
+        dotnet publish -c Release -r ${{ matrix.rid }} --self-contained false \
+          -p:Version=${{ steps.version.outputs.version }} \
+          -o ./output/framework-dependent/${{ matrix.rid }}
 
     - name: Install 7-Zip
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: choco install 7zip.portable -y
 
-    # 并行压缩
     - name: Prepare and Compress Artifacts
       shell: bash
       run: |
+        # Create directories for both versions
         mkdir -p release/self-contained release/framework-dependent
-        
-        # 并行处理 self-contained 和 framework-dependent 版本
-        {
-          # Self-contained version
-          {
-            cp -r output/self-contained/${{ matrix.rid }}/* release/self-contained/
-            cd release/self-contained
-            if [[ "${{ matrix.platform }}" == "windows" ]]; then
-              mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.exe
-            else
-              mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained
-            fi
-            7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.7z *
-            cd ../..
-          } &
 
-          # Framework-dependent version
-          {
-            cp -r output/framework-dependent/${{ matrix.rid }}/* release/framework-dependent/
-            cd release/framework-dependent
-            if [[ "${{ matrix.platform }}" == "windows" ]]; then
-              mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.exe
-            else
-              mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent
-            fi
-            7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.7z *
-            cd ../..
-          } &
-          
-          wait
-        }
+        # Prepare self-contained version
+        cp -r output/self-contained/${{ matrix.rid }}/* release/self-contained/
+        cd release/self-contained
+        if [[ "${{ matrix.platform }}" == "windows" ]]; then
+          mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.exe
+          7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.7z *
+        else
+          mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained
+          7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_self-contained.7z *
+        fi
+        cd ../..
+
+        # Prepare framework-dependent version
+        cp -r output/framework-dependent/${{ matrix.rid }}/* release/framework-dependent/
+        cd release/framework-dependent
+        if [[ "${{ matrix.platform }}" == "windows" ]]; then
+          mv MoyuLinuxdo.exe MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.exe
+          7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.7z *
+        else
+          mv MoyuLinuxdo MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent
+          7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=32m -ms=on ../../MoyuLinuxdo_${{ matrix.platform }}_${{ matrix.architecture }}_${{ steps.version.outputs.version }}_framework-dependent.7z *
+        fi
+        cd ../..
 
     - name: Upload artifact
       uses: actions/upload-artifact@v3
