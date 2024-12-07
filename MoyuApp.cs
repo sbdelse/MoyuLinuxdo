@@ -2,6 +2,7 @@
 using HtmlAgilityPack;
 using System.Net.Http.Headers;
 using System.Text.RegularExpressions;
+using MoyuLinuxdo.Helpers;
 
 namespace MoyuLinuxdo
 {
@@ -18,11 +19,16 @@ namespace MoyuLinuxdo
 
         public MoyuApp()
         {
-            client = new HttpClient();
-            client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0");
-            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            client.DefaultRequestHeaders.Add("Accept", "application/json; q=0.01");
+            var handler = new HttpClientHandler()
+            {
+                AutomaticDecompression = System.Net.DecompressionMethods.GZip 
+                    | System.Net.DecompressionMethods.Deflate 
+                    | System.Net.DecompressionMethods.Brotli
+            };
+            client = new HttpClient(handler);
+            
+            // 应用默认请求头
+            HttpClientConfig.ApplyDefaultHeaders(client);
 
             _jsonOptions = new JsonSerializerOptions
             {
@@ -169,7 +175,7 @@ namespace MoyuLinuxdo
                         if (currentRetry < maxRetries)
                         {
                             Console.WriteLine($"\n遇到 Cloudflare 验证，等待 {retryDelayMs/1000} 秒后重试 ({currentRetry}/{maxRetries})...");
-                            Console.WriteLine("提示：如果持续失败，可以尝试在设置中配置有效的 Cookie");
+                            Console.WriteLine("提示：如果持续失败，以尝试在设置中配置有效的 Cookie");
                             await Task.Delay(retryDelayMs);
                             retryDelayMs *= 2;
                             continue;
@@ -225,20 +231,6 @@ namespace MoyuLinuxdo
         private void UpdateRequestHeaders()
         {
             client.DefaultRequestHeaders.Clear();
-            client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
-            client.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
-            client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7");
-            client.DefaultRequestHeaders.Add("Accept-Encoding", "gzip, deflate, br");
-            client.DefaultRequestHeaders.Add("Connection", "keep-alive");
-            client.DefaultRequestHeaders.Add("Upgrade-Insecure-Requests", "1");
-            client.DefaultRequestHeaders.Add("Sec-Ch-Ua", "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"");
-            client.DefaultRequestHeaders.Add("Sec-Ch-Ua-Mobile", "?0");
-            client.DefaultRequestHeaders.Add("Sec-Ch-Ua-Platform", "\"Windows\"");
-            client.DefaultRequestHeaders.Add("Sec-Fetch-Dest", "document");
-            client.DefaultRequestHeaders.Add("Sec-Fetch-Mode", "navigate");
-            client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "none");
-            client.DefaultRequestHeaders.Add("Sec-Fetch-User", "?1");
-
             if (!string.IsNullOrEmpty(settings.Cookie))
             {
                 client.DefaultRequestHeaders.Add("Cookie", settings.Cookie);
@@ -341,7 +333,7 @@ namespace MoyuLinuxdo
             while (!exit)
             {
                 Console.Clear();
-                Console.WriteLine($"帖子：{topic.Title}");
+                Console.WriteLine($"帖子��{topic.Title}");
 
                 int start = page * settings.RepliesPerTopic;
                 int end = Math.Min(start + settings.RepliesPerTopic, cachedPosts.Count);
@@ -460,30 +452,7 @@ namespace MoyuLinuxdo
                     return false;
                 }
 
-                List<Post> allPosts = new List<Post>();
-                int batchSize = 50;
-                for (int i = 0; i < unloadedPostIds.Count; i += batchSize)
-                {
-                    var batchIds = unloadedPostIds.Skip(i).Take(batchSize).ToList();
-                    string postsUrl = $"https://linux.do/t/{topicId}/posts.json?";
-                    postsUrl += string.Join("&", batchIds.Select(id => $"post_ids[]={id}"));
-                    postsUrl += "&include_suggested=true";
-
-                    var postsResponse = await client.GetAsync(postsUrl);
-                    postsResponse.EnsureSuccessStatusCode();
-                    var postsContent = await postsResponse.Content.ReadAsStringAsync();
-                    var postsData = JsonSerializer.Deserialize<PostsResponse>(postsContent, _jsonOptions);
-                    var posts = postsData?.PostStream?.Posts ?? null;
-
-                    if (posts != null)
-                    {
-                        allPosts.AddRange(posts);
-                    }
-                }
-
-                var newPosts = allPosts.Where(p => !cachedPosts.Any(cp => cp.Id == p.Id)).ToList();
-                cachedPosts.AddRange(newPosts);
-                return newPosts.Count > 0;
+                return await LoadPostsConcurrently(topicId, cachedPosts, unloadedPostIds);
             }
             catch
             {
@@ -493,29 +462,53 @@ namespace MoyuLinuxdo
 
         private void DisplayPosts(List<Post> posts, int startIndex)
         {
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            
             int consoleWidth = Console.WindowWidth;
             string dividerLine = new string('-', consoleWidth);
 
+            // 预计算最大宽度，考虑中文字符
+            int maxNoWidth = StringDisplayHelper.GetDisplayWidth((startIndex + posts.Count).ToString()) + 3;
+            int maxIndexWidth = StringDisplayHelper.GetDisplayWidth(posts.Count.ToString()) + 1;
+            int maxUserInfoWidth = posts.Max(p => 
+            {
+                string adminTag = p.Admin == true ? "[管理员] " : "";
+                string userInfo = $"{adminTag}{p.Name}({p.Username})";
+                return StringDisplayHelper.GetDisplayWidth(userInfo) > 40 ? 40 : StringDisplayHelper.GetDisplayWidth(userInfo);
+            });
+            int maxTimeWidth = 15;
+            int maxLevelWidth = posts.Max(p => StringDisplayHelper.GetDisplayWidth($"用户等级{p.TrustLevel}") + 3);
+            int maxReactionWidth = posts.Max(p => 
+                StringDisplayHelper.GetDisplayWidth($"获赞{p.ReactionUsersCount ?? (p.Reactions?.Sum(r => r.Count) ?? 0)}")
+            );
+
             foreach (var post in posts.Select((p, i) => new { Post = p, Index = i + 1 }))
             {
-                string userInfo = $"{post.Post.Name}({post.Post.Username})";
-                if (userInfo.Length > 20)
+                string adminTag = post.Post.Admin == true ? "[管理员] " : "";
+                string userInfo = $"{adminTag}{post.Post.Name}({post.Post.Username})";
+                if (StringDisplayHelper.GetDisplayWidth(userInfo) > 40)
                 {
-                    userInfo = userInfo.Substring(0, 17) + "...";
+                    userInfo = StringDisplayHelper.TruncateString(userInfo, 37) + "...";
                 }
 
                 string timeStr = GetTimeDifference(post.Post.CreatedAt);
-                int totalReactions = post.Post.Reactions?.Sum(r => r.Count) ?? 0;
+                int totalReactions = post.Post.ReactionUsersCount ?? 
+                    (post.Post.Reactions?.Sum(r => r.Count) ?? 0);
+                
+                string levelStr = $"用户等级{post.Post.TrustLevel}";
+                string reactionStr = $"获赞{totalReactions}";
+                
+                Console.WriteLine(dividerLine);
+                Console.WriteLine("{0} {1} {2} {3} {4} {5}",
+                    StringDisplayHelper.PadRightWithWidth($"No.{startIndex + post.Index}", maxNoWidth),
+                    StringDisplayHelper.PadRightWithWidth($"#{post.Index}", maxIndexWidth),
+                    StringDisplayHelper.PadRightWithWidth(userInfo, maxUserInfoWidth),
+                    StringDisplayHelper.PadRightWithWidth(timeStr, maxTimeWidth),
+                    StringDisplayHelper.PadRightWithWidth(levelStr, maxLevelWidth),
+                    reactionStr
+                );
 
                 string content = StripHtml(post.Post.Cooked ?? "");
-
-                Console.WriteLine(dividerLine);
-                Console.WriteLine("No.{0} #{1} {2,-25}{3,-15}获赞 {4}", 
-                    (startIndex + post.Index).ToString().PadRight(4),
-                    post.Index.ToString().PadRight(3), 
-                    userInfo.PadRight(25), 
-                    timeStr.PadRight(15), 
-                    totalReactions);
                 Console.WriteLine(content);
             }
             Console.WriteLine(dividerLine);

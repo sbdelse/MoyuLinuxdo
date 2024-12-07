@@ -120,6 +120,15 @@ namespace MoyuLinuxdo
 
         [JsonPropertyName("link_counts")]
         public List<LinkCount>? LinkCounts { get; set; }
+
+        [JsonPropertyName("trust_level")]
+        public int TrustLevel { get; set; }
+
+        [JsonPropertyName("reaction_users_count")]
+        public int? ReactionUsersCount { get; set; }
+
+        [JsonPropertyName("admin")]
+        public bool? Admin { get; set; }
     }
 
     public class Reaction
