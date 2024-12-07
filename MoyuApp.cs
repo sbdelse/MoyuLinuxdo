@@ -332,7 +332,7 @@ namespace MoyuLinuxdo
             while (!exit)
             {
                 Console.Clear();
-                Console.WriteLine($"帖子��{topic.Title}");
+                Console.WriteLine($"帖子：{topic.Title}");
 
                 int start = page * settings.RepliesPerTopic;
                 int end = Math.Min(start + settings.RepliesPerTopic, cachedPosts.Count);
