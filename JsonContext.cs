@@ -8,6 +8,8 @@ namespace MoyuLinuxdo
     [JsonSerializable(typeof(PostsResponse))]
     [JsonSerializable(typeof(AboutResponse))]
     [JsonSerializable(typeof(AppSettings))]
+    [JsonSerializable(typeof(SearchResponse))]
+    [JsonSerializable(typeof(RecentSearchResponse))]
     internal partial class AppJsonContext : JsonSerializerContext
     {
     }

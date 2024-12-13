@@ -163,4 +163,91 @@ namespace MoyuLinuxdo
         [JsonPropertyName("clicks")]
         public int Clicks { get; set; }
     }
+
+    public class RecentSearchResponse
+    {
+        [JsonPropertyName("success")]
+        public string? Success { get; set; }
+
+        [JsonPropertyName("recent_searches")]
+        public List<string>? RecentSearches { get; set; }
+    }
+
+    public class SearchResponse
+    {
+        [JsonPropertyName("posts")]
+        public List<SearchPost>? Posts { get; set; }
+
+        [JsonPropertyName("users")]
+        public List<SearchUser>? Users { get; set; }
+
+        [JsonPropertyName("topics")]
+        public List<SearchTopic>? Topics { get; set; }
+    }
+
+    public class SearchPost
+    {
+        [JsonPropertyName("id")]
+        public int Id { get; set; }
+
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("username")]
+        public string? Username { get; set; }
+
+        [JsonPropertyName("blurb")]
+        public string? Blurb { get; set; }
+
+        [JsonPropertyName("category_id")]
+        public int CategoryId { get; set; }
+
+        [JsonPropertyName("topic_id")]
+        public int TopicId { get; set; }
+
+        [JsonPropertyName("created_at")]
+        public DateTime CreatedAt { get; set; }
+
+        [JsonPropertyName("like_count")]
+        public int LikeCount { get; set; }
+    }
+
+    public class SearchUser
+    {
+        [JsonPropertyName("id")]
+        public int Id { get; set; }
+
+        [JsonPropertyName("username")]
+        public string? Username { get; set; }
+
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+    }
+
+    public class SearchTopic
+    {
+        [JsonPropertyName("id")]
+        public int Id { get; set; }
+
+        [JsonPropertyName("title")]
+        public string? Title { get; set; }
+
+        [JsonPropertyName("posts_count")]
+        public int PostsCount { get; set; }
+
+        [JsonPropertyName("reply_count")]
+        public int ReplyCount { get; set; }
+
+        [JsonPropertyName("created_at")]
+        public DateTime CreatedAt { get; set; }
+
+        [JsonPropertyName("last_posted_at")]
+        public DateTime LastPostedAt { get; set; }
+
+        [JsonPropertyName("tags")]
+        public List<string>? Tags { get; set; }
+
+        [JsonPropertyName("category_id")]
+        public int CategoryId { get; set; }
+    }
 }

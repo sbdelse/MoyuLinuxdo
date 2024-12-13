@@ -15,6 +15,13 @@ namespace MoyuLinuxdo
         private int currentTopicPage = 0;
         private Dictionary<int, string> categoryNames = new Dictionary<int, string>();
         private readonly JsonSerializerOptions _jsonOptions;
+        private AboutResponse? cachedAboutData;
+        private DateTime lastAboutDataUpdate = DateTime.MinValue;
+        private const int ABOUT_CACHE_MINUTES = 120;
+        private string? lastSearchTerm;
+        private int lastSearchPage;
+        private bool lastSearchWasAi;
+        private bool returnToSearch;
 
         public MoyuApp()
         {
@@ -26,7 +33,6 @@ namespace MoyuLinuxdo
             };
             client = new HttpClient(handler);
             
-            // 应用默认请求头
             HttpClientConfig.ApplyDefaultHeaders(client);
 
             _jsonOptions = new JsonSerializerOptions
@@ -74,7 +80,7 @@ namespace MoyuLinuxdo
                 }
 
                 DisplayTopics(currentTopicPage);
-                Console.WriteLine("输入数字序号选择帖子，输入n下一页，p上一页，s进入设置，r刷新，q退出");
+                Console.WriteLine("输入数字序号选择帖子，输入n下一页，p上一页，r刷新，f搜索，s进入设置，q退出");
                 Console.Write("请输入命令：");
                 string command = "";
                 bool isNumberInput = false;
@@ -86,7 +92,16 @@ namespace MoyuLinuxdo
                     {
                         break;
                     }
-                    if (char.IsDigit(keyInfo.KeyChar))
+                    else if (keyInfo.Key == ConsoleKey.Backspace)
+                    {
+                        if (command.Length > 0)
+                        {
+                            command = command[..^1];
+                            Console.Write("\b \b");
+                            isNumberInput = command.Length > 0;
+                        }
+                    }
+                    else if (char.IsDigit(keyInfo.KeyChar))
                     {
                         command += keyInfo.KeyChar;
                         Console.Write(keyInfo.KeyChar);
@@ -95,7 +110,7 @@ namespace MoyuLinuxdo
                     else
                     {
                         char cmd = char.ToLower(keyInfo.KeyChar);
-                        if (cmd == 's' || cmd == 'r' || cmd == 'q' || cmd == 'n' || cmd == 'p')
+                        if (cmd == 's' || cmd == 'r' || cmd == 'q' || cmd == 'n' || cmd == 'p' || cmd == 'f')
                         {
                             command = cmd.ToString();
                             Console.Write(cmd);
@@ -123,6 +138,10 @@ namespace MoyuLinuxdo
                 else if (command == "p")
                 {
                     PreviousTopicPage();
+                }
+                else if (command == "f")
+                {
+                    await HandleSearch();
                 }
                 else if (isNumberInput && int.TryParse(command, out int topicIndex))
                 {
@@ -167,7 +186,7 @@ namespace MoyuLinuxdo
                         $"https://linux.do/latest.json?no_definitions=true&page={pageNumber}";
                     var response = await client.GetAsync(url);
                     
-                    // 检查是否遇到 CF 验证
+                    // Check if CF verification is required
                     if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
                     {
                         currentRetry++;
@@ -307,6 +326,9 @@ namespace MoyuLinuxdo
 
         private async Task ViewTopic(Topic topic)
         {
+            bool wasFromSearch = returnToSearch;
+            returnToSearch = true;
+
             int page = 0;
             bool exit = false;
             List<Post> cachedPosts = new List<Post>();
@@ -356,6 +378,12 @@ namespace MoyuLinuxdo
                 switch (command)
                 {
                     case 'b':
+                        if (returnToSearch && lastSearchTerm != null)
+                        {
+                            exit = true;
+                            await ShowSearchResults(lastSearchTerm, lastSearchPage, lastSearchWasAi);
+                            return;
+                        }
                         exit = true;
                         break;
                     case 'n':
@@ -418,6 +446,7 @@ namespace MoyuLinuxdo
                         break;
                 }
             }
+            returnToSearch = false;
         }
 
         private async Task PreloadNextBatch(int topicId, List<Post> cachedPosts)
@@ -466,7 +495,7 @@ namespace MoyuLinuxdo
             int consoleWidth = Console.WindowWidth;
             string dividerLine = new string('-', consoleWidth);
 
-            // 预计算最大宽度，考虑中文字符
+            // 预计算最大宽度考虑中文字符
             int maxNoWidth = StringDisplayHelper.GetDisplayWidth((startIndex + posts.Count).ToString()) + 3;
             int maxIndexWidth = StringDisplayHelper.GetDisplayWidth(posts.Count.ToString()) + 1;
             int maxUserInfoWidth = posts.Max(p => 
@@ -690,7 +719,7 @@ namespace MoyuLinuxdo
                 return;
             }
 
-            // 获取CSRF Token
+            // Get CSRF Token
             var csrfToken = await GetCsrfToken(topicId);
             if (string.IsNullOrEmpty(csrfToken))
             {
@@ -775,15 +804,21 @@ namespace MoyuLinuxdo
         {
             try
             {
+                if (cachedAboutData != null && (DateTime.Now - lastAboutDataUpdate).TotalMinutes < ABOUT_CACHE_MINUTES)
+                {
+                    return;
+                }
+
                 var response = await client.GetAsync("https://linux.do/about.json");
                 response.EnsureSuccessStatusCode();
                 var content = await response.Content.ReadAsStringAsync();
-                var aboutData = JsonSerializer.Deserialize<AboutResponse>(content, _jsonOptions);
+                cachedAboutData = JsonSerializer.Deserialize<AboutResponse>(content, _jsonOptions);
+                lastAboutDataUpdate = DateTime.Now;
 
                 categoryNames.Clear();
-                if (aboutData?.Categories != null)
+                if (cachedAboutData?.Categories != null)
                 {
-                    foreach (var category in aboutData.Categories)
+                    foreach (var category in cachedAboutData.Categories)
                     {
                         if (category.Id != 0 && !string.IsNullOrEmpty(category.Name))
                         {
@@ -796,6 +831,15 @@ namespace MoyuLinuxdo
             {
                 Console.WriteLine($"加载分类信息失败：{ex.Message}");
             }
+        }
+
+        public AboutResponse? GetAboutData()
+        {
+            if (cachedAboutData != null && (DateTime.Now - lastAboutDataUpdate).TotalMinutes < ABOUT_CACHE_MINUTES)
+            {
+                return cachedAboutData;
+            }
+            return null;
         }
 
         private async Task HandleReaction(int topicId, List<Post> currentPosts)
@@ -1024,6 +1068,313 @@ namespace MoyuLinuxdo
             catch
             {
                 return false;
+            }
+        }
+
+        private async Task HandleSearch()
+        {
+            lastSearchTerm = null;
+            lastSearchPage = 1;
+            lastSearchWasAi = false;
+            returnToSearch = false;
+
+            if (string.IsNullOrEmpty(settings.Cookie))
+            {
+                Console.WriteLine("\n需要设置Cookie才能搜索。按任意键继续...");
+                Console.ReadKey();
+                return;
+            }
+
+            var recentSearches = await GetRecentSearches();
+            if (recentSearches?.Count > 0)
+            {
+                Console.WriteLine("\n最近搜索记录：");
+                for (int i = 0; i < recentSearches.Count; i++)
+                {
+                    Console.WriteLine($"{i + 1}. {recentSearches[i]}");
+                }
+                Console.Write("\n选择数字使用历史记录，或直接输入新的搜索内容：\n> ");
+            }
+            else
+            {
+                Console.Write("\n请输入搜索内容\n> ");
+            }
+
+            string searchTerm = "";
+            var lastSuggestTime = DateTime.MinValue;
+            const int debounceMs = 300;
+
+            while (true)
+            {
+                var keyInfo = Console.ReadKey(true);
+                
+                if (keyInfo.Key == ConsoleKey.Enter)
+                {
+                    if (string.IsNullOrWhiteSpace(searchTerm)) return;
+                    
+                    if (int.TryParse(searchTerm, out int index) && recentSearches?.Count >= index && index > 0)
+                    {
+                        searchTerm = recentSearches[index - 1];
+                    }
+                    
+                    await ExecuteSearch(searchTerm);
+                    break;
+                }
+                else if (keyInfo.Key == ConsoleKey.Escape)
+                {
+                    return;
+                }
+                else if (keyInfo.Key == ConsoleKey.Backspace)
+                {
+                    if (searchTerm.Length > 0)
+                    {
+                        searchTerm = searchTerm[..^1];
+                        Console.Write("\b \b");
+                    }
+                }
+                else if (!char.IsControl(keyInfo.KeyChar))
+                {
+                    searchTerm += keyInfo.KeyChar;
+                    Console.Write(keyInfo.KeyChar);
+                }
+
+                if (searchTerm.Length >= 2 && (DateTime.Now - lastSuggestTime).TotalMilliseconds >= debounceMs)
+                {
+                    lastSuggestTime = DateTime.Now;
+                    await ShowSearchSuggestions(searchTerm);
+                }
+            }
+        }
+
+        private async Task<List<string>?> GetRecentSearches()
+        {
+            try
+            {
+                var request = new HttpRequestMessage(HttpMethod.Get, "https://linux.do/u/recent-searches");
+                request.Headers.Add("X-Requested-With", "XMLHttpRequest");
+                
+                var response = await client.SendAsync(request);
+                response.EnsureSuccessStatusCode();
+                
+                var content = await response.Content.ReadAsStringAsync();
+                var result = JsonSerializer.Deserialize<RecentSearchResponse>(content, _jsonOptions);
+                return result?.RecentSearches;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private async Task ShowSearchSuggestions(string searchTerm)
+        {
+            try
+            {
+                var request = new HttpRequestMessage(HttpMethod.Get, $"https://linux.do/search/query?term={Uri.EscapeDataString(searchTerm)}&type_filter=exclude_topics");
+                request.Headers.Add("X-Requested-With", "XMLHttpRequest");
+                var response = await client.SendAsync(request);
+                response.EnsureSuccessStatusCode();
+                
+                var content = await response.Content.ReadAsStringAsync();
+                var result = JsonSerializer.Deserialize<SearchResponse>(content, _jsonOptions);
+
+                Console.WriteLine();
+                Console.WriteLine(new string(' ', Console.WindowWidth));
+                Console.SetCursorPosition(0, Console.CursorTop - 2);
+                
+                if (result?.Posts?.Count > 0)
+                {
+                    Console.WriteLine("\n相关楼层：");
+                    foreach (var post in result.Posts.Take(3))
+                    {
+                        var blurb = post.Blurb?.Length > 50 ? post.Blurb[..50] + "..." : post.Blurb;
+                        Console.WriteLine($"- {post.Name}: {blurb}");
+                    }
+                }
+
+                if (result?.Users?.Count > 0)
+                {
+                    Console.WriteLine("\n相关用户：");
+                    foreach (var user in result.Users.Take(3))
+                    {
+                        Console.WriteLine($"- {user.Name} (@{user.Username})");
+                    }
+                }
+                Console.SetCursorPosition(searchTerm.Length, Console.CursorTop - (result?.Posts?.Count ?? 0) - (result?.Users?.Count ?? 0) - 2);
+            }
+            catch
+            {
+                // 忽略搜索建议的错误
+            }
+        }
+
+        private async Task ExecuteSearch(string term)
+        {
+            try
+            {
+                await LoadCategories();
+                bool isAiSearch = false;
+                int currentPage = 1;
+                returnToSearch = true;
+                await ShowSearchResults(term, currentPage, isAiSearch);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\n搜索失败：{ex.Message}");
+                Console.ReadKey();
+            }
+        }
+
+        private async Task ShowSearchResults(string term, int page, bool isAiSearch)
+        {
+            lastSearchTerm = term;
+            lastSearchPage = page;
+            lastSearchWasAi = isAiSearch;
+
+            try
+            {
+                string url;
+                if (isAiSearch)
+                {
+                    url = $"https://linux.do/discourse-ai/embeddings/semantic-search?q={Uri.EscapeDataString(term)}";
+                    if (page > 1) url += $"&page={page}";
+                }
+                else if (page == 1)
+                {
+                    url = $"https://linux.do/search/query?term={Uri.EscapeDataString(term)}";
+                }
+                else
+                {
+                    url = $"https://linux.do/search?q={Uri.EscapeDataString(term)}&page={page}";
+                }
+
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Add("X-Requested-With", "XMLHttpRequest");
+                request.Headers.Add("Accept", "application/json, text/javascript, */*; q=0.01");
+                var response = await client.SendAsync(request);
+                response.EnsureSuccessStatusCode();
+                
+                var content = await response.Content.ReadAsStringAsync();
+                var result = JsonSerializer.Deserialize<SearchResponse>(content, _jsonOptions);
+
+                Console.Clear();
+                Console.WriteLine($"搜索结果 - \"{term}\" {(isAiSearch ? "[AI搜索]" : "")} - 第{page}页");
+                Console.WriteLine(new string('=', Console.WindowWidth));
+
+                if (result?.Topics?.Count > 0 || result?.Posts?.Count > 0)
+                {
+                    var groupedResults = new Dictionary<int, (SearchTopic? Topic, List<SearchPost> Posts)>();
+                    
+                    if (result?.Topics != null)
+                    {
+                        foreach (var topic in result.Topics)
+                        {
+                            groupedResults[topic.Id] = (topic, new List<SearchPost>());
+                        }
+                    }
+
+                    if (result?.Posts != null)
+                    {
+                        foreach (var post in result.Posts)
+                        {
+                            if (!groupedResults.ContainsKey(post.TopicId))
+                            {
+                                groupedResults[post.TopicId] = (null, new List<SearchPost>());
+                            }
+                            groupedResults[post.TopicId].Posts.Add(post);
+                        }
+                    }
+
+                    int index = 1;
+                    foreach (var group in groupedResults)
+                    {
+                        var (topic, posts) = group.Value;
+                        if (topic != null)
+                        {
+                            var tags = topic.Tags?.Count > 0 ? string.Join(", ", topic.Tags) : null;
+                            var timeDiff = DateTime.Now - topic.LastPostedAt.ToLocalTime();
+                            var timeText = timeDiff.TotalMinutes < 1 ? "刚刚" :
+                                          timeDiff.TotalMinutes < 60 ? $"{(int)timeDiff.TotalMinutes}分钟前" :
+                                          timeDiff.TotalHours < 24 ? $"{(int)timeDiff.TotalHours}小时前" :
+                                          $"{(int)timeDiff.TotalDays}天前";
+                            string categoryText = "";
+                            if (topic.CategoryId != 0 && categoryNames.TryGetValue(topic.CategoryId, out string? categoryName))
+                            {
+                                categoryText = $"[{categoryName}] ";
+                            }
+
+                            Console.WriteLine($"\n{index}. {(string.IsNullOrEmpty(categoryText) ? "" : $"{categoryText}")}{(string.IsNullOrEmpty(tags) ? "" : $"[{tags}] ")}{topic.Title} ({topic.PostsCount}回复) (最后回复于{timeText})");
+                        }
+
+                        if (posts.Count > 0)
+                        {
+                            foreach (var post in posts)
+                            {
+                                var blurb = post.Blurb != null ? Regex.Replace(post.Blurb, @"\[([^\]]+)\]\([^\)]+\)|\*\*|\*|`|#|>|\[|\]|\(|\)", "") : null;
+                                var likeText = post.LikeCount > 0 ? $"({post.LikeCount}赞)" : "";
+                                var timeDiff = DateTime.Now - post.CreatedAt.ToLocalTime();
+                                var timeText = timeDiff.TotalMinutes < 1 ? "刚刚" :
+                                              timeDiff.TotalMinutes < 60 ? $"{(int)timeDiff.TotalMinutes}分钟前" :
+                                              timeDiff.TotalHours < 24 ? $"{(int)timeDiff.TotalHours}小时前" :
+                                              $"{(int)timeDiff.TotalDays}天前";
+
+                                Console.WriteLine($"    └─ {post.Name}({post.Username}): {blurb} {likeText} (发表于{timeText})");
+                            }
+                        }
+                        
+                        index++;
+                    }
+
+                    Console.WriteLine("\n操作选项：");
+                    Console.WriteLine("输入数字查看对应帖子，n下一页，p上一页，a切换到" + (isAiSearch ? "普通" : "AI") + "搜索，q返回到主页");
+                    Console.Write("> ");
+                    while (true)
+                    {
+                        var command = Console.ReadLine()?.ToLower();
+                        switch (command)
+                        {
+                            case "q":
+                                return;
+                            case "n":
+                                await ShowSearchResults(term, page + 1, isAiSearch);
+                                return;
+                            case "p":
+                                if (page > 1)
+                                {
+                                    await ShowSearchResults(term, page - 1, isAiSearch);
+                                }
+                                return;
+                            case "a":
+                                await ShowSearchResults(term, 1, !isAiSearch);
+                                return;
+                            default:
+                                if (int.TryParse(command, out int selectedIndex) &&
+                                    selectedIndex > 0 && selectedIndex <= result?.Topics?.Count)
+                                {
+                                    var selectedTopic = result?.Topics[selectedIndex - 1];
+                                    await ViewTopic(new Topic 
+                                    { 
+                                        Id = selectedTopic?.Id ?? 0,
+                                        Title = selectedTopic?.Title ?? ""
+                                    });
+                                    return;
+                                }
+                                break;
+                        }
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("\n没有找到相关结果。");
+                    Console.WriteLine("\n按任意键返回...");
+                    Console.ReadKey();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\n加载搜索结果失败：{ex.Message}");
+                Console.WriteLine("\n按任意键返回...");
+                Console.ReadKey();
             }
         }
     }
